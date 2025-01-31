@@ -1,11 +1,18 @@
 from territories import *
 from continents import *
 from player import *
+from copy import deepcopy
+from uuid import uuid4
 
 class GameState:
     turn: bool = True # True is Player 1, False is Player 2
     neutral: bool = False # True when setting up Neutral armies
     phase: int = -1 # [ -1, 0, 1, 2, 3, 4 ]
+    territories: list[Territory] = []
+    players: list[Player] = [
+        Player(name="Neutral", armies=4)
+    ]
+    playable: dict[str, Player] = {}
     '''
         Phase -1 is 'Waiting to Start'
         Phase 0  is 'Board Setup'
@@ -14,8 +21,59 @@ class GameState:
         Phase 3  is 'End of Turn'
     '''
 
+    def __init__(self) -> None:
+        self.territories = deepcopy(TERRITORIES)
+
+    def register(self, name: str) -> str:
+        uuid = str(uuid4())
+
+        if len(self.players) < 3 and len(name) and len(name) <= len("Player 1"):
+            self.players.append(Player(name, id=uuid))
+            self.playable[uuid] = self.players[-1]
+        else:
+            uuid = ""
+
+        return uuid
+    
+    def start(self, id: str) -> bool:
+        if self.isPlayer(id):
+            self.playable[id].ready = True
+            return True
+        return False
+
+    def board(self, id: str) -> dict:
+        return {
+            "play" : 1 if self.turn else 2,
+            "phase" : self.status(),
+            "place" : self.playable[id].armies,
+            "neutral" : self.neutral,
+            "players" : [ player.name for player in self.players ],
+            "board" : {
+                name : { "player" : territory.player, "armies" : territory.armies }
+                for name, territory in self.territories.items()
+            }
+        }
+
     def isSetup(self) -> bool:
         return self.phase == 0
+    
+    def isPlayer(self, id: str) -> bool:
+        return id in self.playable.keys()
+    
+    def isYourTurn(self, id: str) -> bool:
+        return (self.turn and self.playable[id] == self.players[1]) or (not self.turn and self.playable[id] == self.players[2])
+    
+    def getDefenders(self, id: str) -> list[Territory]:
+        return self.players[0].territories + \
+            (self.players[1].territories \
+             if self.playable[id] == self.players[2] \
+                else self.players[2].territories)
+
+    def getAttackers(self, id: str) -> list[Territory]:
+        return (self.players[1].territories \
+                if self.playable[id] == self.players[1] \
+                    else self.players[2].territories)
+
     
     def isPlacement(self) -> bool:
         return self.phase == 1
@@ -28,7 +86,8 @@ class GameState:
 
     def isEndofGame(self) -> bool:
         player = 1 if self.turn else 2
-        return self.phase == 4 or all(t.player == player for t in TERRITORIES.values())
+        return self.phase == 4 or \
+            all(t.player == player for t in self.territories.values())
 
     def isStarted(self) -> bool:
         return self.phase >= 0
@@ -37,8 +96,7 @@ class GameState:
         return self.phase > 0 and self.phase < 4
 
     def isReady(self) -> bool:
-        global PLAYERS
-        both_ready = len(PLAYERS) == 3 and PLAYERS[1].ready and PLAYERS[2].ready
+        both_ready = len(self.players) == 3 and self.players[1].ready and self.players[2].ready
         if both_ready and not self.isStarted():
             self.shuffle()
             self.startSetup()
@@ -75,23 +133,22 @@ class GameState:
         self.phase = 4
 
     def shuffle(self) -> None:
-        global PLAYERS
-        territories = list(TERRITORIES.values())
+        territories = list(self.territories.values())
         import random
         random.shuffle(territories)
-        PLAYERS[0].territories = territories[:14]
-        PLAYERS[1].territories = territories[14:28]
-        PLAYERS[2].territories = territories[28:]
+        self.players[0].territories = territories[:14]
+        self.players[1].territories = territories[14:28]
+        self.players[2].territories = territories[28:]
 
-        for territory in PLAYERS[1].territories:
+        for territory in self.players[1].territories:
             territory.player = 1
-        for territory in PLAYERS[2].territories:
+        for territory in self.players[2].territories:
             territory.player = 2
 
         self.turn = (random.randint(1,10) % 2) == 0
 
     def player(self) -> Player:
-        return PLAYERS[1 if self.turn else 2]
+        return self.players[1 if self.turn else 2]
 
     def income(self) -> None:
         '''
@@ -107,11 +164,11 @@ class GameState:
         self.player().armies = income
 
     def place(self, territory: str, armies: str) -> None:
-        if game.neutral:
-            TERRITORIES[territory].armies += 1
-            PLAYERS[0].armies -= 1
+        if self.neutral:
+            self.territories[territory].armies += 1
+            self.players[0].armies -= 1
         else:
-            TERRITORIES[territory].armies += armies
+            self.territories[territory].armies += armies
             self.player().armies -= armies
         
         if self.player().armies == 0:
@@ -125,9 +182,9 @@ class GameState:
         Does not itself progress game state
         Will exhaust all committed armies to invade
         '''
-        TERRITORIES[attacker].armies -= armies
+        self.territories[attacker].armies -= armies
         offence = armies
-        defence = TERRITORIES[defender].armies
+        defence = self.territories[defender].armies
 
         lost = False
         conq = False if defence else True
@@ -154,10 +211,10 @@ class GameState:
                 conq = True
 
         if conq:
-            PLAYERS[TERRITORIES[defender].player].territories.remove(TERRITORIES[defender])
-            TERRITORIES[defender].player = 1 if self.turn else 2
-            TERRITORIES[defender].armies = offence
-            self.player().territories += [ TERRITORIES[defender] ]
+            self.players[self.territories[defender].player].territories.remove(self.territories[defender])
+            self.territories[defender].player = 1 if self.turn else 2
+            self.territories[defender].armies = offence
+            self.player().territories += [ self.territories[defender] ]
 
             if self.isEndofGame():
                 self.startEndOfGame()
@@ -171,10 +228,10 @@ class GameState:
         One must submit a transfer with null transfer
         origin and dest as the same territory
         '''
-        TERRITORIES[origin].armies -= armies
-        TERRITORIES[dest].armies += armies
+        self.territories[origin].armies -= armies
+        self.territories[dest].armies += armies
         self.startEndOfTurn()
-        game.determineState()
+        self.determineState()
     
     def determineState(self) -> None:
         '''
@@ -182,39 +239,35 @@ class GameState:
         Adjust phase, turn, and neutral as needed
         '''
         if self.isSetup():
-            if game.neutral:
+            if self.neutral:
                 self.neutral = False
                 self.turn = not self.turn
                 self.player().armies = 2
-                if PLAYERS[0].armies == 0:
+                if self.players[0].armies == 0:
                     self.startPlacement()
             else:
-                game.neutral = True
+                self.neutral = True
 
         if self.isPlaying():
             if self.isEndOfTurn():
                 self.turn = not self.turn
                 self.startPlacement()
 
+    def validPlacement(self, id: str, territory: str, armies: int) -> bool:
+        if (self.neutral or (self.playable[id].armies >= armies and armies > 0)):
+            territories = self.players[0].territories if self.neutral else self.playable[id].territories
+            return self.territories[territory] in territories
+        return False
+    
+    def validCombat(self, id: str, attacker: str, defender: str, armies: int) -> bool:
+        if self.territories[attacker] in self.getAttackers(id) and self.territories[defender] in self.getDefenders(id) and armies > 0:
+            if self.territories[defender] in self.territories[attacker].neighbors:
+                return self.territories[attacker].armies > armies
+        return False
+
+    def validTransfer(self, id: str, origin: str, dest: str, armies: int) -> bool:
+        if self.territories[origin] in self.getAttackers(id) and self.territories[dest] in self.getAttackers(id) and armies >= 0:
+            return self.territories[origin].armies > armies
+        return False
+
 game = GameState()
-
-def isYourTurn(id: str) -> bool:
-    return (game.turn and PLAYABLE[id] == PLAYERS[1]) or (not game.turn and PLAYABLE[id] == PLAYERS[2])
-
-def validPlacement(id: str, territory: str, armies: int) -> bool:
-    global PLAYABLE
-    if (game.neutral or (PLAYABLE[id].armies >= armies and armies > 0)):
-        territories = PLAYERS[0].territories if game.neutral else PLAYABLE[id].territories
-        return TERRITORIES[territory] in territories
-    return False
-
-def validCombat(id: str, attacker: str, defender: str, armies: int) -> bool:
-    if TERRITORIES[attacker] in getAttackers(id) and TERRITORIES[defender] in getDefenders(id) and armies > 0:
-        if TERRITORIES[defender] in TERRITORIES[attacker].neighbors:
-            return TERRITORIES[attacker].armies > armies
-    return False
-
-def validTransfer(id: str, origin: str, dest: str, armies: int) -> bool:
-    if TERRITORIES[origin] in getAttackers(id) and TERRITORIES[dest] in getAttackers(id) and armies >= 0:
-        return TERRITORIES[origin].armies > armies
-    return False
