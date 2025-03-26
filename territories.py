@@ -4,7 +4,7 @@ class Territory:
     armies: int
     neighbors: list
 
-    def __init__(self, name, armies = 0):
+    def __init__(self, name, armies = 1):
         self.name = name
         self.armies = armies
         self.neighbors = []

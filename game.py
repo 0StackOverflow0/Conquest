@@ -10,7 +10,7 @@ class GameState:
     phase: int = -1 # [ -1, 0, 1, 2, 3, 4 ]
     territories: list[Territory] = []
     players: list[Player] = [
-        Player(name="Neutral", armies=4)
+        Player(name="Neutral", armies=26)
     ]
     playable: dict[str, Player] = {}
     '''
